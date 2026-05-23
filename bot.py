@@ -1,17 +1,23 @@
 import asyncio
 import io
 import os
+import re
 import yt_dlp
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from PIL import Image as PILImage
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
+BOT_USERNAME = "sarvar_image_bot"
 
+# ============================================================
+# PDF funksiyalari
+# ============================================================
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -80,6 +86,9 @@ def create_pdf_from_multiple_images(images_list, title=""):
     buffer.close()
     return pdf_bytes
 
+# ============================================================
+# URL aniqlash
+# ============================================================
 VIDEO_SITES = [
     'youtube.com', 'youtu.be',
     'instagram.com',
@@ -87,97 +96,216 @@ VIDEO_SITES = [
     'pinterest.com', 'pin.it',
     'facebook.com', 'fb.watch',
     'twitter.com', 'x.com',
-    'reddit.com', 'vimeo.com',
 ]
 
+def extract_url(text):
+    urls = re.findall(r'https?://[^\s]+', text)
+    if urls:
+        return urls[0]
+    return None
+
 def is_video_url(text):
+    url = extract_url(text)
+    if url:
+        return any(site in url.lower() for site in VIDEO_SITES)
     return any(site in text.lower() for site in VIDEO_SITES)
 
+# ============================================================
+# Video yuklovchi
+# ============================================================
 def download_media(url):
     output_path = "/tmp/media_%(id)s.%(ext)s"
-    ydl_opts = {
-        'outtmpl': output_path,
-        'format': 'best[ext=mp4]/best',
-        'quiet': True,
-        'no_warnings': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)'
+    
+    # Har xil platformalar uchun sozlamalar
+    if 'youtube.com' in url or 'youtu.be' in url:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'best[ext=mp4][filesize<50M]/best[filesize<50M]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+            }
         }
-    }
+    elif 'instagram.com' in url:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+        }
+    elif 'tiktok.com' in url or 'vm.tiktok.com' in url:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+            }
+        }
+    elif 'pinterest.com' in url or 'pin.it' in url:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+            }
+        }
+    else:
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+            }
+        }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
         title = info.get('title', 'media')
         ext = info.get('ext', 'mp4')
+
     with open(filename, 'rb') as f:
         media_bytes = f.read()
     os.remove(filename)
+
     image_exts = ['jpg', 'jpeg', 'png', 'webp', 'gif']
     media_type = 'image' if ext.lower() in image_exts else 'video'
     return media_type, title, media_bytes, ext
 
+# ============================================================
+# Inline tugmalar
+# ============================================================
+def get_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "➕ Guruhga qo'shish",
+                url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🤖 @" + BOT_USERNAME,
+                url=f"https://t.me/{BOT_USERNAME}"
+            )
+        ]
+    ])
+
+# ============================================================
+# Handlerlar
+# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "➕ Guruhga qo'shish",
+            url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+        )]
+    ])
     await update.message.reply_text(
         "Salom! Media yuklovchi bot!\n\n"
-        "Rasm yuboring — fayl sifatida saqlanadi\n"
-        "Matn yuboring — PDF bo'ladi\n"
-        "Havola yuboring — video yuklanadi\n\n"
-        "YouTube, Instagram, TikTok\n"
-        "Pinterest, Facebook, Twitter\n\n"
-        "/album — Ko'p rasmli PDF"
+        "🎬 Havola yuboring — video yuklanadi\n"
+        "🖼 Rasm yuboring — fayl sifatida saqlanadi\n"
+        "📝 Matn yuboring — PDF bo'ladi\n\n"
+        "✅ Qo'llab-quvvatlanadi:\n"
+        "• YouTube\n"
+        "• Instagram\n"
+        "• TikTok\n"
+        "• Pinterest\n"
+        "• Facebook\n"
+        "• Twitter/X\n\n"
+        "/album — Ko'p rasmli PDF",
+        reply_markup=keyboard
     )
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if is_video_url(text):
-        msg = await update.message.reply_text("Yuklanmoqda... Kuting.")
+    
+    url = extract_url(text)
+    if not url:
+        if is_video_url(text):
+            url = text
+    
+    if url and is_video_url(url):
+        msg = await update.message.reply_text("⏳ Yuklanmoqda... Kuting.")
         try:
-            media_type, title, media_bytes, ext = download_media(text)
+            media_type, title, media_bytes, ext = download_media(url)
             size_mb = len(media_bytes) / (1024 * 1024)
+            
             if size_mb > 50:
-                await msg.edit_text(f"Fayl {size_mb:.1f}MB — 50MB dan katta!")
+                await msg.edit_text(
+                    f"❌ Video {size_mb:.1f}MB — Telegram 50MB dan katta "
+                    f"fayllarni qabul qilmaydi."
+                )
                 return
-            await msg.edit_text(f"Yuklandi ({size_mb:.1f}MB)! Yuborilyapti...")
+
+            caption = f"🎬 {title[:150]}\n\n⬇️ @{BOT_USERNAME} orqali yuklandi"
+            
+            await msg.delete()
+            
             if media_type == 'image':
                 await update.message.reply_document(
                     document=io.BytesIO(media_bytes),
                     filename=f"rasm.{ext}",
-                    caption=f"{title[:100]}"
+                    caption=caption,
+                    reply_markup=get_keyboard()
                 )
             else:
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-keyboard = InlineKeyboardMarkup([
-    [InlineKeyboardButton("💾 Saqlash", callback_data="save"),
-     InlineKeyboardButton("🎵 Qo'shiqni yuklab olish", callback_data="audio")],
-    [InlineKeyboardButton("👥 Guruhga qo'shish", url=f"https://t.me/sarvar_image_bot?startgroup=true")]
-])
-
-await update.message.reply_video(
-    video=io.BytesIO(media_bytes),
-    filename="video.mp4",
-    caption=f"🎬 {title[:100]}\n\n⬇️ @sarvar_image_bot orqali yuklandi",
-    reply_markup=keyboard
-)
+                await update.message.reply_video(
+                    video=io.BytesIO(media_bytes),
+                    filename="video.mp4",
+                    caption=caption,
+                    reply_markup=get_keyboard()
                 )
         except Exception as e:
-            err = str(e)[:200]
-            if 'private' in err.lower():
-                await msg.edit_text("Bu post yopiq (private).")
+            err = str(e)
+            if 'private' in err.lower() or 'login' in err.lower():
+                await msg.edit_text(
+                    "❌ Bu post yopiq yoki login talab qiladi.\n"
+                    "Faqat ochiq postlar yuklanadi."
+                )
+            elif 'Sign in' in err:
+                await msg.edit_text(
+                    "❌ YouTube bot ekanligimizni aniqladi.\n"
+                    "Boshqa video sinab ko'ring."
+                )
             else:
-                await msg.edit_text(f"Xatolik: {err}")
+                await msg.edit_text(f"❌ Xatolik: {err[:200]}")
     else:
-        await update.message.reply_text("PDF tayyorlanmoqda...")
+        await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
         try:
-            pdf_bytes = create_pdf_from_text(text,
-                        title=f"{update.message.from_user.first_name}ning Hujjati")
+            pdf_bytes = create_pdf_from_text(
+                text,
+                title=f"{update.message.from_user.first_name}ning Hujjati"
+            )
             await update.message.reply_document(
                 document=io.BytesIO(pdf_bytes),
                 filename="hujjat.pdf",
-                caption="PDF tayyor!"
+                caption="✅ PDF tayyor!"
             )
         except Exception as e:
-            await update.message.reply_text(f"Xatolik: {e}")
+            await update.message.reply_text(f"❌ Xatolik: {e}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('album_mode'):
@@ -186,9 +314,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img_bytes = bytes(await file.download_as_bytearray())
         context.user_data.setdefault('album_images', []).append(img_bytes)
         count = len(context.user_data['album_images'])
-        await update.message.reply_text(f"{count} ta rasm. /done yozing.")
+        await update.message.reply_text(f"🖼 {count} ta rasm. /done yozing.")
         return
-    await update.message.reply_text("Rasm saqlanmoqda...")
+
+    await update.message.reply_text("⏳ Rasm saqlanmoqda...")
     try:
         photo = update.message.photo[-1]
         file = await photo.get_file()
@@ -196,16 +325,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=io.BytesIO(img_bytes),
             filename="rasm.jpg",
-            caption="Rasm fayl sifatida saqlandi!"
+            caption=f"🖼 Rasm saqlandi!\n\n⬇️ @{BOT_USERNAME} orqali saqlandi",
+            reply_markup=get_keyboard()
         )
         context.user_data['last_image'] = img_bytes
     except Exception as e:
-        await update.message.reply_text(f"Xatolik: {e}")
+        await update.message.reply_text(f"❌ Xatolik: {e}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if doc.mime_type and doc.mime_type.startswith('image/'):
-        await update.message.reply_text("PDF tayyorlanmoqda...")
+        await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
         try:
             file = await doc.get_file()
             img_bytes = bytes(await file.download_as_bytearray())
@@ -213,41 +343,47 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_document(
                 document=io.BytesIO(pdf_bytes),
                 filename="rasm.pdf",
-                caption="PDF tayyor!"
+                caption="✅ PDF tayyor!"
             )
         except Exception as e:
-            await update.message.reply_text(f"Xatolik: {e}")
+            await update.message.reply_text(f"❌ Xatolik: {e}")
 
 async def album_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['album_mode'] = True
     context.user_data['album_images'] = []
-    await update.message.reply_text("Rasmlarni yuboring, /done yozing.")
+    await update.message.reply_text("📸 Rasmlarni yuboring, /done yozing.")
 
 async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     images = context.user_data.get('album_images', [])
     if not images:
-        await update.message.reply_text("Rasm topilmadi.")
+        await update.message.reply_text("⚠️ Rasm topilmadi.")
         return
-    await update.message.reply_text(f"{len(images)} ta rasmdan PDF...")
+    await update.message.reply_text(f"⏳ {len(images)} ta rasmdan PDF...")
     try:
-        pdf_bytes = create_pdf_from_multiple_images(images,
-                    title=f"{update.message.from_user.first_name}ning Albomi")
+        pdf_bytes = create_pdf_from_multiple_images(
+            images,
+            title=f"{update.message.from_user.first_name}ning Albomi"
+        )
         await update.message.reply_document(
             document=io.BytesIO(pdf_bytes),
             filename="album.pdf",
-            caption=f"{len(images)} ta rasmli PDF tayyor!"
+            caption=f"✅ {len(images)} ta rasmli PDF tayyor!"
         )
     except Exception as e:
-        await update.message.reply_text(f"Xatolik: {e}")
+        await update.message.reply_text(f"❌ Xatolik: {e}")
     finally:
         context.user_data['album_mode'] = False
         context.user_data['album_images'] = []
 
+# ============================================================
+# Ishga tushirish
+# ============================================================
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("album", album_start))
     app.add_handler(CommandHandler("done", album_done))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
