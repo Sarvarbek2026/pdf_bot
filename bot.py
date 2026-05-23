@@ -3,7 +3,6 @@ import io
 import os
 import re
 import yt_dlp
-import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from reportlab.lib.pagesizes import A4
@@ -15,9 +14,6 @@ from PIL import Image as PILImage
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
 BOT_USERNAME = "sarvar_image_bot"
 
-# ============================================================
-# PDF funksiyalari
-# ============================================================
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -86,9 +82,6 @@ def create_pdf_from_multiple_images(images_list, title=""):
     buffer.close()
     return pdf_bytes
 
-# ============================================================
-# URL aniqlash
-# ============================================================
 VIDEO_SITES = [
     'youtube.com', 'youtu.be',
     'instagram.com',
@@ -100,28 +93,16 @@ VIDEO_SITES = [
 
 def extract_url(text):
     urls = re.findall(r'https?://[^\s]+', text)
-    if urls:
-        return urls[0]
-    return None
+    return urls[0] if urls else None
 
-def is_video_url(text):
-    url = extract_url(text)
-    if url:
-        return any(site in url.lower() for site in VIDEO_SITES)
-    return any(site in text.lower() for site in VIDEO_SITES)
+def is_video_url(url):
+    return any(site in url.lower() for site in VIDEO_SITES)
 
-# ============================================================
-# Video yuklovchi
-# ============================================================
-def download_media(url):
-    output_path = "/tmp/media_%(id)s.%(ext)s"
-    
-    # Har xil platformalar uchun sozlamalar
-    elif 'youtube.com' in url or 'youtu.be' in url:
+def download_youtube(url):
     from pytubefix import YouTube
-    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
+    yt = YouTube(url)
     stream = yt.streams.filter(
-        progressive=True, 
+        progressive=True,
         file_extension='mp4'
     ).order_by('resolution').last()
     title = yt.title
@@ -129,94 +110,49 @@ def download_media(url):
     stream.stream_to_buffer(buffer)
     buffer.seek(0)
     media_bytes = buffer.read()
-    size_mb = len(media_bytes) / (1024 * 1024)
     return 'video', title, media_bytes, 'mp4'
-    elif 'instagram.com' in url:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
-        }
-    elif 'tiktok.com' in url or 'vm.tiktok.com' in url:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-            }
-        }
-    elif 'pinterest.com' in url or 'pin.it' in url:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-            }
-        }
-    else:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-            }
-        }
 
+def download_other(url):
+    output_path = "/tmp/media_%(id)s.%(ext)s"
+    ydl_opts = {
+        'outtmpl': output_path,
+        'format': 'best[ext=mp4]/best',
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+        }
+    }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
         title = info.get('title', 'media')
         ext = info.get('ext', 'mp4')
-
     with open(filename, 'rb') as f:
         media_bytes = f.read()
     os.remove(filename)
-
     image_exts = ['jpg', 'jpeg', 'png', 'webp', 'gif']
     media_type = 'image' if ext.lower() in image_exts else 'video'
     return media_type, title, media_bytes, ext
 
-# ============================================================
-# Inline tugmalar
-# ============================================================
+def download_media(url):
+    if 'youtube.com' in url or 'youtu.be' in url:
+        return download_youtube(url)
+    return download_other(url)
+
 def get_keyboard():
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "➕ Guruhga qo'shish",
-                url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🤖 @" + BOT_USERNAME,
-                url=f"https://t.me/{BOT_USERNAME}"
-            )
-        ]
-    ])
-
-# ============================================================
-# Handlerlar
-# ============================================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "➕ Guruhga qo'shish",
             url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+        )],
+        [InlineKeyboardButton(
+            f"🤖 @{BOT_USERNAME}",
+            url=f"https://t.me/{BOT_USERNAME}"
         )]
     ])
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Salom! Media yuklovchi bot!\n\n"
         "🎬 Havola yuboring — video yuklanadi\n"
@@ -230,38 +166,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Facebook\n"
         "• Twitter/X\n\n"
         "/album — Ko'p rasmli PDF",
-        reply_markup=keyboard
+        reply_markup=get_keyboard()
     )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    await update.callback_query.answer()
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    
-    url = extract_url(text)
-    if not url:
-        if is_video_url(text):
-            url = text
-    
+    url = extract_url(text) or (text if text.startswith('http') else None)
+
     if url and is_video_url(url):
         msg = await update.message.reply_text("⏳ Yuklanmoqda... Kuting.")
         try:
             media_type, title, media_bytes, ext = download_media(url)
             size_mb = len(media_bytes) / (1024 * 1024)
-            
             if size_mb > 50:
-                await msg.edit_text(
-                    f"❌ Video {size_mb:.1f}MB — Telegram 50MB dan katta "
-                    f"fayllarni qabul qilmaydi."
-                )
+                await msg.edit_text(f"❌ Video {size_mb:.1f}MB — 50MB dan katta!")
                 return
-
             caption = f"🎬 {title[:150]}\n\n⬇️ @{BOT_USERNAME} orqali yuklandi"
-            
             await msg.delete()
-            
             if media_type == 'image':
                 await update.message.reply_document(
                     document=io.BytesIO(media_bytes),
@@ -279,15 +203,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             err = str(e)
             if 'private' in err.lower() or 'login' in err.lower():
-                await msg.edit_text(
-                    "❌ Bu post yopiq yoki login talab qiladi.\n"
-                    "Faqat ochiq postlar yuklanadi."
-                )
-            elif 'Sign in' in err:
-                await msg.edit_text(
-                    "❌ YouTube bot ekanligimizni aniqladi.\n"
-                    "Boshqa video sinab ko'ring."
-                )
+                await msg.edit_text("❌ Bu post yopiq. Faqat ochiq postlar yuklanadi.")
             else:
                 await msg.edit_text(f"❌ Xatolik: {err[:200]}")
     else:
@@ -314,7 +230,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = len(context.user_data['album_images'])
         await update.message.reply_text(f"🖼 {count} ta rasm. /done yozing.")
         return
-
     await update.message.reply_text("⏳ Rasm saqlanmoqda...")
     try:
         photo = update.message.photo[-1]
@@ -326,7 +241,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=f"🖼 Rasm saqlandi!\n\n⬇️ @{BOT_USERNAME} orqali saqlandi",
             reply_markup=get_keyboard()
         )
-        context.user_data['last_image'] = img_bytes
     except Exception as e:
         await update.message.reply_text(f"❌ Xatolik: {e}")
 
@@ -373,9 +287,6 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['album_mode'] = False
         context.user_data['album_images'] = []
 
-# ============================================================
-# Ishga tushirish
-# ============================================================
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
