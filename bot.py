@@ -117,22 +117,20 @@ def download_media(url):
     output_path = "/tmp/media_%(id)s.%(ext)s"
     
     # Har xil platformalar uchun sozlamalar
-    if 'youtube.com' in url or 'youtu.be' in url:
-        ydl_opts = {
-            'outtmpl': output_path,
-            'format': 'best[ext=mp4][filesize<50M]/best[filesize<50M]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android'],
-                    'player_skip': ['webpage', 'configs'],
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
-            }
-        }
+    elif 'youtube.com' in url or 'youtu.be' in url:
+    from pytubefix import YouTube
+    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
+    stream = yt.streams.filter(
+        progressive=True, 
+        file_extension='mp4'
+    ).order_by('resolution').last()
+    title = yt.title
+    buffer = io.BytesIO()
+    stream.stream_to_buffer(buffer)
+    buffer.seek(0)
+    media_bytes = buffer.read()
+    size_mb = len(media_bytes) / (1024 * 1024)
+    return 'video', title, media_bytes, 'mp4'
     elif 'instagram.com' in url:
         ydl_opts = {
             'outtmpl': output_path,
