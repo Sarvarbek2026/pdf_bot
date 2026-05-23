@@ -2,6 +2,7 @@ import asyncio
 import io
 import os
 import re
+import requests
 import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -12,8 +13,12 @@ from reportlab.lib.units import cm
 from PIL import Image as PILImage
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
+RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "5e826a9b24msheafeaf09a41a683p12abf3jsncd1c35b1f313")
 BOT_USERNAME = "sarvar_image_bot"
 
+# ============================================================
+# PDF funksiyalari
+# ============================================================
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -82,6 +87,9 @@ def create_pdf_from_multiple_images(images_list, title=""):
     buffer.close()
     return pdf_bytes
 
+# ============================================================
+# URL aniqlash
+# ============================================================
 VIDEO_SITES = [
     'youtube.com', 'youtu.be',
     'instagram.com',
@@ -98,20 +106,66 @@ def extract_url(text):
 def is_video_url(url):
     return any(site in url.lower() for site in VIDEO_SITES)
 
+# ============================================================
+# YouTube yuklovchi — RapidAPI
+# ============================================================
 def download_youtube(url):
-    from pytubefix import YouTube
-    yt = YouTube(url)
-    stream = yt.streams.filter(
-        progressive=True,
-        file_extension='mp4'
-    ).order_by('resolution').last()
-    title = yt.title
-    buffer = io.BytesIO()
-    stream.stream_to_buffer(buffer)
-    buffer.seek(0)
-    media_bytes = buffer.read()
+    # Video ID olish
+    if 'youtu.be' in url:
+        video_id = url.split('/')[-1].split('?')[0]
+    elif 'shorts' in url:
+        video_id = url.split('/shorts/')[-1].split('?')[0]
+    else:
+        video_id = url.split('v=')[-1].split('&')[0]
+
+    headers = {
+        "x-rapidapi-key": RAPID_API_KEY,
+        "x-rapidapi-host": "youtube-video-fast-downloader-24-7.p.rapidapi.com"
+    }
+
+    params = {
+        "response_mode": "default",
+        "id": video_id
+    }
+
+    api_url = "https://youtube-video-fast-downloader-24-7.p.rapidapi.com/get-videos-info/"
+    response = requests.get(api_url, headers=headers, params=params, timeout=30)
+    data = response.json()
+
+    video_url = None
+    title = "YouTube Video"
+
+    if isinstance(data, list):
+        for item in data:
+            title = item.get('title', 'YouTube Video')
+            formats = item.get('formats', [])
+            for f in formats:
+                if f.get('ext') == 'mp4' and f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    video_url = f.get('url')
+                    break
+            if not video_url:
+                for f in formats:
+                    if f.get('ext') == 'mp4':
+                        video_url = f.get('url')
+                        break
+    elif isinstance(data, dict):
+        title = data.get('title', 'YouTube Video')
+        formats = data.get('formats', [])
+        for f in formats:
+            if f.get('ext') == 'mp4':
+                video_url = f.get('url')
+                break
+
+    if not video_url:
+        raise Exception("Video URL topilmadi! API javobini tekshiring.")
+
+    video_response = requests.get(video_url, stream=True, timeout=120)
+    media_bytes = video_response.content
     return 'video', title, media_bytes, 'mp4'
 
+# ============================================================
+# Boshqa platformalar — yt-dlp
+# ============================================================
 def download_other(url):
     output_path = "/tmp/media_%(id)s.%(ext)s"
     ydl_opts = {
@@ -140,6 +194,9 @@ def download_media(url):
         return download_youtube(url)
     return download_other(url)
 
+# ============================================================
+# Inline tugmalar
+# ============================================================
 def get_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
@@ -152,6 +209,9 @@ def get_keyboard():
         )]
     ])
 
+# ============================================================
+# Handlerlar
+# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Salom! Media yuklovchi bot!\n\n"
