@@ -145,10 +145,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=f"{title[:100]}"
                 )
             else:
-                await update.message.reply_video(
-                    video=io.BytesIO(media_bytes),
-                    filename="video.mp4",
-                    caption=f"{title[:100]}"
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+keyboard = InlineKeyboardMarkup([
+    [InlineKeyboardButton("💾 Saqlash", callback_data="save"),
+     InlineKeyboardButton("🎵 Qo'shiqni yuklab olish", callback_data="audio")],
+    [InlineKeyboardButton("👥 Guruhga qo'shish", url=f"https://t.me/sarvar_image_bot?startgroup=true")]
+])
+
+await update.message.reply_video(
+    video=io.BytesIO(media_bytes),
+    filename="video.mp4",
+    caption=f"🎬 {title[:100]}\n\n⬇️ @sarvar_image_bot orqali yuklandi",
+    reply_markup=keyboard
+)
                 )
         except Exception as e:
             err = str(e)[:200]
