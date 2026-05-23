@@ -3,4 +3,4 @@ reportlab
 Pillow
 yt-dlp
 nest_asyncio
-pytubefix
+requests
