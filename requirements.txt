@@ -4,3 +4,4 @@ Pillow
 yt-dlp
 nest_asyncio
 requests
+pytubefix
