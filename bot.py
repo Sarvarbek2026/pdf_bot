@@ -84,7 +84,6 @@ VIDEO_SITES = [
     'youtube.com', 'youtu.be',
     'instagram.com',
     'tiktok.com', 'vm.tiktok.com',
-    'snapchat.com', 'story.snapchat.com',
     'pinterest.com', 'pin.it',
     'facebook.com', 'fb.watch',
     'twitter.com', 'x.com',
@@ -120,14 +119,12 @@ def download_media(url):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Salom! Media yuklovchi bot!\n\n"
-        "Rasm yuboring → Fayl sifatida saqlanadi\n"
-        "Matn yuboring → PDF bo'ladi\n"
-        "Havola yuboring → Video yuklanadi\n\n"
-        "Qo'llab-quvvatlanadi:\n"
+        "Rasm yuboring — fayl sifatida saqlanadi\n"
+        "Matn yuboring — PDF bo'ladi\n"
+        "Havola yuboring — video yuklanadi\n\n"
         "YouTube, Instagram, TikTok\n"
-        "Snapchat, Pinterest, Facebook\n"
-        "Twitter/X, Reddit, Vimeo\n\n"
-        "/album → Ko'p rasmli PDF"
+        "Pinterest, Facebook, Twitter\n\n"
+        "/album — Ko'p rasmli PDF"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,7 +141,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if media_type == 'image':
                 await update.message.reply_document(
                     document=io.BytesIO(media_bytes),
-                    filename=f"{title[:50]}.{ext}",
+                    filename=f"rasm.{ext}",
                     caption=f"{title[:100]}"
                 )
             else:
@@ -236,7 +233,7 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['album_mode'] = False
         context.user_data['album_images'] = []
 
-def main():
+async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("album", album_start))
@@ -245,7 +242,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     print("Bot ishga tushdi!")
-    app.run_polling(drop_pending_updates=True)
+    await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
