@@ -126,49 +126,9 @@ def download_youtube(url):
     
     response = requests.get(api_url, headers=headers, timeout=30)
     data = response.json()
-
-    video_url = None
-    title = "YouTube Video"
-
-    # API javobini to'g'ri o'qish
-    if isinstance(data, list) and len(data) > 0:
-        item = data[0]
-        title = item.get('title', 'YouTube Video')
-        formats = item.get('formats', [])
-        
-        # Avval mp4 qidiramiz
-        for f in formats:
-            if (f.get('ext') == 'mp4' and 
-                f.get('vcodec', 'none') != 'none' and 
-                f.get('acodec', 'none') != 'none'):
-                video_url = f.get('url')
-                break
-        
-        # Topilmasa istalgan mp4
-        if not video_url:
-            for f in formats:
-                if f.get('ext') == 'mp4':
-                    video_url = f.get('url')
-                    break
-        
-        # Hali ham topilmasa birinchi format
-        if not video_url and formats:
-            video_url = formats[-1].get('url')
-
-    elif isinstance(data, dict):
-        title = data.get('title', 'YouTube Video')
-        formats = data.get('formats', [])
-        for f in formats:
-            if f.get('url'):
-                video_url = f.get('url')
-                break
-
-    if not video_url:
-        raise Exception(f"Video URL topilmadi! API javobi: {str(data)[:300]}")
-
-    video_response = requests.get(video_url, stream=True, timeout=120)
-    media_bytes = video_response.content
-    return 'video', title, media_bytes, 'mp4'
+    
+    # API javobini to'liq ko'rsatish
+    raise Exception(f"API javobi: {str(data)[:500]}")
 
 # ============================================================
 # Boshqa platformalar — yt-dlp
