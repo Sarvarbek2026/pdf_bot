@@ -1,5 +1,6 @@
 python-telegram-bot==20.7
-yt-dlp==2024.11.18
-reportlab==4.2.0
-Pillow==10.3.0
-httpx==0.27.0
+httpx
+yt-dlp
+reportlab
+Pillow
+python-dotenv
