@@ -249,12 +249,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             await msg.edit_text(f"❌ Yuklab bo'lmadi: {str(e)[:300]}")
+    async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    url = extract_url(text)
+
+    if url and is_video_url(url):
+        msg = await update.message.reply_text("⏳ Yuklanmoqda...")
+        try:
+            title, ext, filesize, direct_url, thumbnail = await get_video_info_async(url)
+            size_mb = filesize / (1024 * 1024) if filesize else 0
+
+            if filesize and size_mb > 50:
+                await msg.edit_text(f"❌ Fayl {size_mb:.1f}MB — juda katta!")
+                return
+
+            caption = f"🎬 {title[:100]}\n📦 {f'{size_mb:.1f}MB' if size_mb else ''}\n\n⬇️ @{BOT_USERNAME}"
+            await msg.delete()
+
+            await update.message.reply_video(
+                video=direct_url,
+                caption=caption,
+                supports_streaming=True
+            )
+        except Exception as e:
+            await msg.edit_text(f"❌ Yuklab bo'lmadi: {str(e)[:300]}")
     else:
-        await update.message.reply_text(
-            "👆 Havola yuboring yoki:\n"
-            "📄 /pdf — matndan PDF\n"
-            "📸 /album — rasmlardan PDF"
-        )
+        # Matnni PDF qilish
+        msg = await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
+        try:
+            pdf_bytes = create_pdf_from_text(text)
+            await msg.delete()
+            await update.message.reply_document(
+                document=io.BytesIO(pdf_bytes),
+                filename="hujjat.pdf",
+                caption="✅ PDF tayyor!"
+            )
+        except Exception as e:
+            await msg.edit_text(f"❌ Xatolik: {e}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('album_mode'):
