@@ -4,6 +4,7 @@ import os
 import re
 import requests
 import yt_dlp
+from groq import Groq
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from reportlab.lib.pagesizes import A4
@@ -13,12 +14,12 @@ from reportlab.lib.units import cm
 from PIL import Image as PILImage
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
-RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "5e826a9b24msheafeaf09a41a683p12abf3jsncd1c35b1f313")
+RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 BOT_USERNAME = "sarvar_image_bot"
 
-# ============================================================
-# PDF funksiyalari
-# ============================================================
+groq_client = Groq(api_key=GROQ_API_KEY)
+
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -87,9 +88,6 @@ def create_pdf_from_multiple_images(images_list, title=""):
     buffer.close()
     return pdf_bytes
 
-# ============================================================
-# URL aniqlash
-# ============================================================
 VIDEO_SITES = [
     'youtube.com', 'youtu.be',
     'instagram.com',
@@ -106,9 +104,6 @@ def extract_url(text):
 def is_video_url(url):
     return any(site in url.lower() for site in VIDEO_SITES)
 
-# ============================================================
-# YouTube yuklovchi — RapidAPI
-# ============================================================
 def download_youtube(url):
     if 'youtu.be' in url:
         video_id = url.split('/')[-1].split('?')[0]
@@ -123,16 +118,44 @@ def download_youtube(url):
     }
 
     api_url = f"https://youtube-video-fast-downloader-24-7.p.rapidapi.com/get-videos-info/{video_id}"
-    
     response = requests.get(api_url, headers=headers, timeout=30)
     data = response.json()
-    
-    # API javobini to'liq ko'rsatish
-    raise Exception(f"API javobi: {str(data)[:500]}")
 
-# ============================================================
-# Boshqa platformalar — yt-dlp
-# ============================================================
+    video_url = None
+    title = "YouTube Video"
+
+    if isinstance(data, list) and len(data) > 0:
+        item = data[0]
+        title = item.get('title', 'YouTube Video')
+        formats = item.get('formats', [])
+        for f in formats:
+            if (f.get('ext') == 'mp4' and
+                f.get('vcodec', 'none') != 'none' and
+                f.get('acodec', 'none') != 'none'):
+                video_url = f.get('url')
+                break
+        if not video_url:
+            for f in formats:
+                if f.get('ext') == 'mp4':
+                    video_url = f.get('url')
+                    break
+        if not video_url and formats:
+            video_url = formats[-1].get('url')
+    elif isinstance(data, dict):
+        title = data.get('title', 'YouTube Video')
+        formats = data.get('formats', [])
+        for f in formats:
+            if f.get('url'):
+                video_url = f.get('url')
+                break
+
+    if not video_url:
+        raise Exception(f"Video URL topilmadi! API javobi: {str(data)[:300]}")
+
+    video_response = requests.get(video_url, stream=True, timeout=120)
+    media_bytes = video_response.content
+    return 'video', title, media_bytes, 'mp4'
+
 def download_other(url):
     output_path = "/tmp/media_%(id)s.%(ext)s"
     ydl_opts = {
@@ -161,9 +184,23 @@ def download_media(url):
         return download_youtube(url)
     return download_other(url)
 
-# ============================================================
-# Inline tugmalar
-# ============================================================
+def ask_groq(question, history=[]):
+    messages = [
+        {
+            "role": "system",
+            "content": "Siz foydali AI assistantsiz. O'zbek tilida javob bering."
+        }
+    ]
+    messages.extend(history)
+    messages.append({"role": "user", "content": question})
+
+    response = groq_client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=messages,
+        max_tokens=1024,
+    )
+    return response.choices[0].message.content
+
 def get_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
@@ -176,15 +213,13 @@ def get_keyboard():
         )]
     ])
 
-# ============================================================
-# Handlerlar
-# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Salom! Media yuklovchi bot!\n\n"
+        "Salom! Media yuklovchi va AI bot!\n\n"
         "🎬 Havola yuboring — video yuklanadi\n"
         "🖼 Rasm yuboring — fayl sifatida saqlanadi\n"
-        "📝 Matn yuboring — PDF bo'ladi\n\n"
+        "📝 Matn yuboring — PDF bo'ladi\n"
+        "🤖 /ai savol — AI javob beradi\n\n"
         "✅ Qo'llab-quvvatlanadi:\n"
         "• YouTube\n"
         "• Instagram\n"
@@ -195,6 +230,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/album — Ko'p rasmli PDF",
         reply_markup=get_keyboard()
     )
+
+async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            "Savol yozing!\nMasalan: /ai Python nima?"
+        )
+        return
+    question = ' '.join(context.args)
+    msg = await update.message.reply_text("🤖 AI o'ylayapti...")
+    try:
+        history = context.user_data.get('ai_history', [])
+        answer = ask_groq(question, history)
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": answer})
+        if len(history) > 10:
+            history = history[-10:]
+        context.user_data['ai_history'] = history
+        await msg.edit_text(f"🤖 {answer}")
+    except Exception as e:
+        await msg.edit_text(f"❌ AI xatolik: {e}")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
@@ -317,6 +372,7 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ai", handle_ai))
     app.add_handler(CommandHandler("album", album_start))
     app.add_handler(CommandHandler("done", album_done))
     app.add_handler(CallbackQueryHandler(handle_callback))
