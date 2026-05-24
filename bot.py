@@ -1,4 +1,3 @@
-import asyncio
 import io
 import os
 import re
@@ -20,7 +19,7 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME", "sarvar_image_bot")
 
 print(f"🤖 Bot: @{BOT_USERNAME}")
 
-# ============ PDF FUNKSIYALAR ============
+# ============ PDF ============
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -65,16 +64,12 @@ def create_pdf_from_image(image_bytes, caption=""):
     buffer.close()
     return pdf_bytes
 
-def create_pdf_from_multiple_images(images_list, title=""):
+def create_pdf_from_multiple_images(images_list):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                             rightMargin=0, leftMargin=0,
                             topMargin=0, bottomMargin=0)
     story = []
-    if title:
-        styles = getSampleStyleSheet()
-        story.append(Paragraph(title, styles['Title']))
-        story.append(Spacer(1, 0.5*cm))
     page_w, page_h = A4
     for i, img_bytes in enumerate(images_list):
         img = PILImage.open(io.BytesIO(img_bytes))
@@ -146,6 +141,8 @@ async def download_youtube_rapidapi(url):
         return 'video', title, video_response.content, 'mp4'
 
 async def download_with_ytdlp(url):
+    import asyncio
+
     def sync_download():
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts = {
@@ -176,7 +173,7 @@ async def download_media(url):
         try:
             return await download_youtube_rapidapi(url)
         except Exception as e:
-            print(f"RapidAPI xatosi: {e}, yt-dlp sinab ko'riladi...")
+            print(f"RapidAPI xatosi: {e}")
             return await download_with_ytdlp(url)
     else:
         return await download_with_ytdlp(url)
@@ -191,13 +188,11 @@ def get_keyboard():
 # ============ HANDLERLAR ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 *AI Assistant Bot*\n\n"
-        "✅ Imkoniyatlar:\n\n"
-        "🎬 *Havola yuboring* — video yuklanadi\n"
-        "🖼 *Rasm yuboring* — saqlab olish\n"
-        "📄 `/pdf matn` — PDF yaratish\n"
-        "📸 `/album` — ko'p rasmli PDF\n\n"
-        "*Qo'llab-quvvatlanadi:*\n"
+        "🤖 *Bot imkoniyatlari:*\n\n"
+        "🎬 Havola yuboring — video yuklanadi\n"
+        "🖼 Rasm yuboring — saqlab olish\n"
+        "📄 /pdf matn — PDF yaratish\n"
+        "📸 /album — rasmlardan PDF\n\n"
         "• YouTube • Instagram • TikTok\n"
         "• Pinterest • Twitter • Facebook",
         parse_mode="Markdown",
@@ -229,7 +224,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = extract_url(text)
 
     if url and is_video_url(url):
-        msg = await update.message.reply_text("⏳ Yuklanmoqda, kuting...")
+        msg = await update.message.reply_text("⏳ Yuklanmoqda...")
         try:
             media_type, title, media_bytes, ext = await download_media(url)
             size_mb = len(media_bytes) / (1024 * 1024)
@@ -307,8 +302,7 @@ async def album_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['album_mode'] = True
     context.user_data['album_images'] = []
     await update.message.reply_text(
-        "📸 *Album rejimi yoqildi!*\n\n"
-        "Rasmlarni yuboring, tugatgach /done yozing.",
+        "📸 *Album rejimi yoqildi!*\n\nRasmlarni yuboring, tugatgach /done yozing.",
         parse_mode="Markdown"
     )
 
@@ -334,7 +328,7 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['album_images'] = []
 
 # ============ MAIN ============
-async def main():
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -347,7 +341,7 @@ async def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     print("✅ Bot ishga tushdi!")
-    await app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
