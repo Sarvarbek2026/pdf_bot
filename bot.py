@@ -2,7 +2,7 @@ import asyncio
 import io
 import os
 import re
-import requests
+import httpx
 import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -12,12 +12,17 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from PIL import Image as PILImage
 
-# Barcha kalitlar va API ma'lumotlari o'z joyida
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
-RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "700f1c4dfdmsh3630f9d985a21ffp159cf7jsn858547ca2f79")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "gsk_vM6QdZ018gQ4gY9h9D91WGdyb3FYrEwS0P6V7u7XN2Y5J1K9f3")
+# ============ KALITLAR ============
+BOT_TOKEN = "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg"
+RAPID_API_KEY = "5e826a9b24msheafeaf09a41a683p12ab3fjsncd1c35b1f313"
+GROQ_API_KEY = "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"
 BOT_USERNAME = "sarvar_image_bot"
 
+print(f"🤖 Bot: @{BOT_USERNAME}")
+print(f"🔑 RapidAPI: {RAPID_API_KEY[:10]}...")
+print(f"🎯 Groq: {GROQ_API_KEY[:10]}...")
+
+# PDF funksiyalari
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -102,150 +107,141 @@ def extract_url(text):
 def is_video_url(url):
     return any(site in url.lower() for site in VIDEO_SITES)
 
-def download_youtube(url):
+# YouTube yuklab olish (RapidAPI)
+async def download_youtube_rapidapi(url):
+    """RapidAPI orqali YouTube video yuklash"""
     if 'youtu.be' in url:
         video_id = url.split('/')[-1].split('?')[0]
     elif 'shorts' in url:
         video_id = url.split('/shorts/')[-1].split('?')[0]
     else:
         video_id = url.split('v=')[-1].split('&')[0]
-
+    
     headers = {
         "x-rapidapi-key": RAPID_API_KEY,
-        "x-rapidapi-host": "youtube-video-fast-downloader-24-7.p.rapidapi.com"
+        "x-rapidapi-host": "youtube-video-download-info.p.rapidapi.com"
     }
+    
+    api_url = f"https://youtube-video-download-info.p.rapidapi.com/dl?id={video_id}"
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(api_url, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Formatni topish
+            if 'formats' in data:
+                for fmt in data['formats']:
+                    if fmt.get('ext') == 'mp4' and fmt.get('url'):
+                        video_url = fmt['url']
+                        title = data.get('title', 'YouTube Video')
+                        
+                        # Videoni yuklab olish
+                        video_response = await client.get(video_url)
+                        return 'video', title, video_response.content, 'mp4'
+        
+        raise Exception("YouTube video topilmadi")
 
-    api_url = f"https://youtube-video-fast-downloader-24-7.p.rapidapi.com/get-videos-info/{video_id}"
-    response = requests.get(api_url, headers=headers, timeout=30)
-    data = response.json()
-
-    video_url = None
-    title = "YouTube Video"
-
-    if isinstance(data, list) and len(data) > 0:
-        item = data[0]
-        title = item.get('title', 'YouTube Video')
-        formats = item.get('formats', [])
-        for f in formats:
-            if (f.get('ext') == 'mp4' and
-                f.get('vcodec', 'none') != 'none' and
-                f.get('acodec', 'none') != 'none'):
-                video_url = f.get('url')
-                break
-        if not video_url:
-            for f in formats:
-                if f.get('ext') == 'mp4':
-                    video_url = f.get('url')
-                    break
-        if not video_url and formats:
-            video_url = formats[-1].get('url')
-    elif isinstance(data, dict):
-        title = data.get('title', 'YouTube Video')
-        formats = data.get('formats', [])
-        for f in formats:
-            if f.get('url'):
-                video_url = f.get('url')
-                break
-
-    if not video_url:
-        raise Exception(f"Video URL topilmadi!")
-
-    video_response = requests.get(video_url, stream=True, timeout=120)
-    media_bytes = video_response.content
-    return 'video', title, media_bytes, 'mp4'
-
-def download_other(url):
-    output_path = "/tmp/media_%(id)s.%(ext)s"
-    ydl_opts = {
-        'outtmpl': output_path,
-        'format': 'best[ext=mp4]/best',
-        'quiet': True,
-        'no_warnings': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+# yt-dlp bilan yuklash
+async def download_with_ytdlp(url):
+    """yt-dlp orqali yuklab olish"""
+    def sync_download():
+        ydl_opts = {
+            'outtmpl': '/tmp/%(title)s.%(ext)s',
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
         }
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        title = info.get('title', 'media')
-        ext = info.get('ext', 'mp4')
-    with open(filename, 'rb') as f:
-        media_bytes = f.read()
-    os.remove(filename)
-    image_exts = ['jpg', 'jpeg', 'png', 'webp', 'gif']
-    media_type = 'image' if ext.lower() in image_exts else 'video'
-    return media_type, title, media_bytes, ext
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            title = info.get('title', 'media')
+            ext = info.get('ext', 'mp4')
+            
+            with open(filename, 'rb') as f:
+                media_bytes = f.read()
+            os.remove(filename)
+            
+            image_exts = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+            media_type = 'image' if ext.lower() in image_exts else 'video'
+            
+            return media_type, title, media_bytes, ext
+    
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, sync_download)
 
-def download_media(url):
+async def download_media(url):
+    """Asosiy yuklab olish funksiyasi"""
     if 'youtube.com' in url or 'youtu.be' in url:
-        return download_youtube(url)
-    return download_other(url)
+        return await download_youtube_rapidapi(url)
+    else:
+        return await download_with_ytdlp(url)
 
-def ask_groq(question, history=[]):
+# Groq AI
+async def ask_groq_async(question, history=[]):
+    if not GROQ_API_KEY:
+        return "⚠️ Groq API kaliti yo'q"
+    
     messages = [
-        {
-            "role": "system",
-            "content": "Siz foydali AI assistantsiz. O'zbek tilida javob bering."
-        }
+        {"role": "system", "content": "Siz foydali AI assistantsiz. O'zbek tilida javob bering."}
     ]
-    messages.extend(history)
+    messages.extend(history[-6:])
     messages.append({"role": "user", "content": question})
-
-    response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "llama3-8b-8192",
-            "messages": messages,
-            "max_tokens": 1024
-        },
-        timeout=30
-    )
-    data = response.json()
-    return data['choices'][0]['message']['content']
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "llama3-8b-8192",
+                "messages": messages,
+                "max_tokens": 500
+            }
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Groq xatosi: {response.status_code}")
+        
+        data = response.json()
+        return data['choices'][0]['message']['content']
 
 def get_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "➕ Guruhga qo'shish",
-            url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
-        )],
-        [InlineKeyboardButton(
-            f"🤖 @{BOT_USERNAME}",
-            url=f"https://t.me/{BOT_USERNAME}"
-        )]
+        [InlineKeyboardButton("➕ Guruhga qo'shish", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+        [InlineKeyboardButton(f"🤖 @{BOT_USERNAME}", url=f"https://t.me/{BOT_USERNAME}")]
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Salom! Men sizning AI yordamchingizman! 🤖\n\n"
-        "⚡ Groq AI bilan ishlayman\n\n"
-        "💬 Istalgan savol yozing — javob beraman\n"
-        "🎬 Havola yuboring — video yuklanadi\n"
-        "🖼 Rasm yuboring — fayl sifatida saqlanadi\n"
-        "📄 /pdf matn — PDF yaratadi\n"
-        "📸 /album — Ko'p rasmli PDF\n\n"
-        "✅ Video platformalar:\n"
-        "• YouTube • Instagram • TikTok\n"
-        "• Pinterest • Facebook • Twitter/X",
+        "🤖 *AI Assistant Bot*\n\n"
+        "✅ Quyidagi imkoniyatlar mavjud:\n\n"
+        "💬 *Matn yozing* — AI javob beradi\n"
+        "🎬 *Havola yuboring* — video/rasm yuklanadi\n"
+        "🖼 *Rasm yuboring* — saqlab olish mumkin\n"
+        "📄 `/pdf matn` — PDF yaratadi\n"
+        "📸 `/album` — ko'p rasmli PDF\n\n"
+        "*Qo'llab-quvvatlanadi:*\n"
+        "• YouTube • Instagram • TikTok",
+        parse_mode="Markdown",
         reply_markup=get_keyboard()
     )
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Matn yozing! Masalan: /pdf Salom dunyo")
+        await update.message.reply_text("📝 Matn yozing! Masalan: `/pdf Salom`", parse_mode="Markdown")
         return
     text = ' '.join(context.args)
-    await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
+    await update.message.reply_text("⏳ PDF tayyor...")
     try:
-        pdf_bytes = create_pdf_from_text(
-            text,
-            title=f"{update.message.from_user.first_name}ning Hujjati"
-        )
+        pdf_bytes = create_pdf_from_text(text)
         await update.message.reply_document(
             document=io.BytesIO(pdf_bytes),
             filename="hujjat.pdf",
@@ -259,51 +255,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    url = extract_url(text) or (text if text.startswith('http') else None)
-
+    url = extract_url(text)
+    
     if url and is_video_url(url):
-        msg = await update.message.reply_text("⏳ Yuklanmoqda... Kuting.")
+        msg = await update.message.reply_text("⏳ Yuklanmoqda...")
         try:
-            media_type, title, media_bytes, ext = download_media(url)
+            media_type, title, media_bytes, ext = await download_media(url)
             size_mb = len(media_bytes) / (1024 * 1024)
+            
             if size_mb > 50:
-                await msg.edit_text(f"❌ Video {size_mb:.1f}MB — 50MB dan katta!")
+                await msg.edit_text(f"❌ Fayl {size_mb:.1f}MB - 50MB dan katta!")
                 return
-            caption = f"🎬 {title[:150]}\n\n⬇️ @{BOT_USERNAME} orqali yuklandi"
+            
+            caption = f"🎬 {title[:100]}\n\n⬇️ @{BOT_USERNAME}"
             await msg.delete()
+            
             if media_type == 'image':
                 await update.message.reply_document(
                     document=io.BytesIO(media_bytes),
                     filename=f"rasm.{ext}",
-                    caption=caption,
-                    reply_markup=get_keyboard()
+                    caption=caption
                 )
             else:
                 await update.message.reply_video(
                     video=io.BytesIO(media_bytes),
-                    filename="video.mp4",
-                    caption=caption,
-                    reply_markup=get_keyboard()
+                    filename=f"video.{ext}",
+                    caption=caption
                 )
         except Exception as e:
-            err = str(e)
-            if 'private' in err.lower() or 'login' in err.lower():
-                await msg.edit_text("❌ Bu post yopiq. Faqat ochiq postlar yuklanadi.")
-            else:
-                await msg.edit_text(f"❌ Xatolik: {err[:200]}")
+            await msg.edit_text(f"❌ Xatolik: {str(e)[:200]}")
     else:
-        msg = await update.message.reply_text("🤖 Groq AI o'ylayapti...")
+        msg = await update.message.reply_text("🤗 O'ylayapti...")
         try:
-            history = context.user_data.get('ai_history', [])
-            answer = ask_groq(text, history)
-            history.append({"role": "user", "content": text})
-            history.append({"role": "assistant", "content": answer})
-            if len(history) > 10:
-                history = history[-10:]
-            context.user_data['ai_history'] = history
+            answer = await ask_groq_async(text)
             await msg.edit_text(f"🤖 {answer}")
         except Exception as e:
-            await msg.edit_text(f"❌ AI xatolik: {str(e)[:200]}")
+            await msg.edit_text(f"❌ Xatolik: {str(e)[:200]}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('album_mode'):
@@ -314,6 +301,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = len(context.user_data['album_images'])
         await update.message.reply_text(f"🖼 {count} ta rasm. /done yozing.")
         return
+    
     await update.message.reply_text("⏳ Rasm saqlanmoqda...")
     try:
         photo = update.message.photo[-1]
@@ -322,8 +310,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=io.BytesIO(img_bytes),
             filename="rasm.jpg",
-            caption=f"🖼 Rasm saqlandi!\n\n⬇️ @{BOT_USERNAME} orqali saqlandi",
-            reply_markup=get_keyboard()
+            caption=f"🖼 Rasm saqlandi!\n\n⬇️ @{BOT_USERNAME}"
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Xatolik: {e}")
@@ -331,7 +318,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if doc.mime_type and doc.mime_type.startswith('image/'):
-        await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
+        await update.message.reply_text("⏳ PDF tayyor...")
         try:
             file = await doc.get_file()
             img_bytes = bytes(await file.download_as_bytearray())
@@ -356,14 +343,11 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(f"⏳ {len(images)} ta rasmdan PDF...")
     try:
-        pdf_bytes = create_pdf_from_multiple_images(
-            images,
-            title=f"{update.message.from_user.first_name}ning Albomi"
-        )
+        pdf_bytes = create_pdf_from_multiple_images(images)
         await update.message.reply_document(
             document=io.BytesIO(pdf_bytes),
             filename="album.pdf",
-            caption=f"✅ {len(images)} ta rasmli PDF tayyor!"
+            caption=f"✅ {len(images)} ta rasmli PDF!"
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Xatolik: {e}")
@@ -371,7 +355,7 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['album_mode'] = False
         context.user_data['album_images'] = []
 
-def main():
+async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -383,8 +367,8 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
-    print("Bot muvaffaqiyatli ishga tushdi...")
-    app.run_polling(drop_pending_updates=True)
+    print("✅ Bot ishga tushdi!")
+    await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
