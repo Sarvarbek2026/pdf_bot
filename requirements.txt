@@ -4,4 +4,3 @@ Pillow
 yt-dlp
 nest_asyncio
 requests
-groq
