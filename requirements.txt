@@ -3,4 +3,3 @@ httpx
 yt-dlp
 reportlab
 Pillow
-python-dotenv
