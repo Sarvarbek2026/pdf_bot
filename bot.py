@@ -4,7 +4,6 @@ import os
 import re
 import requests
 import yt_dlp
-from groq import Groq
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from reportlab.lib.pagesizes import A4
@@ -17,8 +16,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8
 RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 BOT_USERNAME = "sarvar_image_bot"
-
-groq_client = Groq(api_key=GROQ_API_KEY)
 
 def create_pdf_from_text(text, title="Hujjat"):
     buffer = io.BytesIO()
@@ -150,7 +147,7 @@ def download_youtube(url):
                 break
 
     if not video_url:
-        raise Exception(f"Video URL topilmadi! API javobi: {str(data)[:300]}")
+        raise Exception(f"Video URL topilmadi!")
 
     video_response = requests.get(video_url, stream=True, timeout=120)
     media_bytes = video_response.content
@@ -194,12 +191,21 @@ def ask_groq(question, history=[]):
     messages.extend(history)
     messages.append({"role": "user", "content": question})
 
-    response = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=messages,
-        max_tokens=1024,
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "llama3-8b-8192",
+            "messages": messages,
+            "max_tokens": 1024
+        },
+        timeout=30
     )
-    return response.choices[0].message.content
+    data = response.json()
+    return data['choices'][0]['message']['content']
 
 def get_keyboard():
     return InlineKeyboardMarkup([
@@ -215,41 +221,37 @@ def get_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Salom! Media yuklovchi va AI bot!\n\n"
+        "Salom! Men sizning AI yordamchingizman! 🤖\n\n"
+        "⚡ Groq AI bilan ishlayman\n\n"
+        "💬 Istalgan savol yozing — javob beraman\n"
         "🎬 Havola yuboring — video yuklanadi\n"
         "🖼 Rasm yuboring — fayl sifatida saqlanadi\n"
-        "📝 Matn yuboring — PDF bo'ladi\n"
-        "🤖 /ai savol — AI javob beradi\n\n"
-        "✅ Qo'llab-quvvatlanadi:\n"
-        "• YouTube\n"
-        "• Instagram\n"
-        "• TikTok\n"
-        "• Pinterest\n"
-        "• Facebook\n"
-        "• Twitter/X\n\n"
-        "/album — Ko'p rasmli PDF",
+        "📄 /pdf matn — PDF yaratadi\n"
+        "📸 /album — Ko'p rasmli PDF\n\n"
+        "✅ Video platformalar:\n"
+        "• YouTube • Instagram • TikTok\n"
+        "• Pinterest • Facebook • Twitter/X",
         reply_markup=get_keyboard()
     )
 
-async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text(
-            "Savol yozing!\nMasalan: /ai Python nima?"
-        )
+        await update.message.reply_text("Matn yozing! Masalan: /pdf Salom dunyo")
         return
-    question = ' '.join(context.args)
-    msg = await update.message.reply_text("🤖 AI o'ylayapti...")
+    text = ' '.join(context.args)
+    await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
     try:
-        history = context.user_data.get('ai_history', [])
-        answer = ask_groq(question, history)
-        history.append({"role": "user", "content": question})
-        history.append({"role": "assistant", "content": answer})
-        if len(history) > 10:
-            history = history[-10:]
-        context.user_data['ai_history'] = history
-        await msg.edit_text(f"🤖 {answer}")
+        pdf_bytes = create_pdf_from_text(
+            text,
+            title=f"{update.message.from_user.first_name}ning Hujjati"
+        )
+        await update.message.reply_document(
+            document=io.BytesIO(pdf_bytes),
+            filename="hujjat.pdf",
+            caption="✅ PDF tayyor!"
+        )
     except Exception as e:
-        await msg.edit_text(f"❌ AI xatolik: {e}")
+        await update.message.reply_text(f"❌ Xatolik: {e}")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
@@ -289,19 +291,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await msg.edit_text(f"❌ Xatolik: {err[:200]}")
     else:
-        await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
+        # Oddiy matn → AI javob beradi
+        msg = await update.message.reply_text("🤖 Groq AI o'ylayapti...")
         try:
-            pdf_bytes = create_pdf_from_text(
-                text,
-                title=f"{update.message.from_user.first_name}ning Hujjati"
-            )
-            await update.message.reply_document(
-                document=io.BytesIO(pdf_bytes),
-                filename="hujjat.pdf",
-                caption="✅ PDF tayyor!"
-            )
+            history = context.user_data.get('ai_history', [])
+            answer = ask_groq(text, history)
+            history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": answer})
+            if len(history) > 10:
+                history = history[-10:]
+            context.user_data['ai_history'] = history
+            await msg.edit_text(f"🤖 {answer}")
         except Exception as e:
-            await update.message.reply_text(f"❌ Xatolik: {e}")
+            await msg.edit_text(f"❌ AI xatolik: {str(e)[:200]}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('album_mode'):
@@ -372,7 +374,7 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ai", handle_ai))
+    app.add_handler(CommandHandler("pdf", handle_pdf))
     app.add_handler(CommandHandler("album", album_start))
     app.add_handler(CommandHandler("done", album_done))
     app.add_handler(CallbackQueryHandler(handle_callback))
