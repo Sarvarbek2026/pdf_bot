@@ -12,9 +12,10 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from PIL import Image as PILImage
 
+# Barcha kalitlar va API ma'lumotlari o'z joyida
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8927416207:AAFA2t6g7Ka5SMKfBLeaeGfcW8v8StI08eg")
-RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "700f1c4dfdmsh3630f9d985a21ffp159cf7jsn858547ca2f79")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "gsk_vM6QdZ018gQ4gY9h9D91WGdyb3FYrEwS0P6V7u7XN2Y5J1K9f3")
 BOT_USERNAME = "sarvar_image_bot"
 
 def create_pdf_from_text(text, title="Hujjat"):
@@ -291,7 +292,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await msg.edit_text(f"❌ Xatolik: {err[:200]}")
     else:
-        # Oddiy matn → AI javob beradi
         msg = await update.message.reply_text("🤖 Groq AI o'ylayapti...")
         try:
             history = context.user_data.get('ai_history', [])
@@ -371,8 +371,9 @@ async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['album_mode'] = False
         context.user_data['album_images'] = []
 
-async def main():
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pdf", handle_pdf))
     app.add_handler(CommandHandler("album", album_start))
@@ -381,10 +382,9 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    print("Bot ishga tushdi!")
-    await app.run_polling(drop_pending_updates=True)
+    
+    print("Bot muvaffaqiyatli ishga tushdi...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.get_event_loop().run_until_complete(main())
+    main()
