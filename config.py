@@ -5,7 +5,6 @@ RAPID_API_KEY = os.environ.get("RAPID_API_KEY", "5e826a9b24msheafeaf09a41a683p12
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "sarvar_image_bot")
 
 VIDEO_SITES = [
-    'youtube.com', 'youtu.be', 
-    'instagram.com', 'tiktok.com', 'vm.tiktok.com', 'pinterest.com', 
-    'pin.it', 'facebook.com', 'fb.watch', 'twitter.com', 'x.com'
+    'youtube.com', 'youtu.be', 'instagram.com', 'tiktok.com', 'vm.tiktok.com', 
+    'pinterest.com', 'pin.it', 'facebook.com', 'fb.watch', 'twitter.com', 'x.com'
 ]
