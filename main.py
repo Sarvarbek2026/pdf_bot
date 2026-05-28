@@ -1,167 +1,111 @@
-import io
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-from config import BOT_TOKEN, BOT_USERNAME
-import services
+import os
+import logging
+import nest_asyncio
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from config import BOT_TOKEN, VIDEO_SITES
+from services import create_pdf_from_images, download_video_via_api
 
-def get_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Guruhga qo'shish", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")]
-    ])
+nest_asyncio.apply()
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Foydalanuvchilar ma'lumotlarini vaqtincha saqlash xotirasi
+user_data_store = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot ishga tushganda chiqadigan toza va chiroyli menyu"""
+    user_id = update.effective_user.id
+    user_data_store[user_id] = {'images': [], 'mode': None}
+    
+    keyboard = [['🖼️ Rasm -> PDF', '📥 Video Yuklash']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    
     await update.message.reply_text(
-        "🤖 *AI Assistant Bot* muvaffaqiyatli ishga tushdi!\n\n"
-        "✅ Imkoniyatlar:\n"
-        "🎬 *Havola yuboring* — video yuklanadi\n"
-        "🖼 *Rasm yuboring* — hujjat sifatida saqlash\n"
-        "📄 `/pdf matn` — matndan PDF yaratish\n"
-        "📸 `/album` — ko'p rasmli PDF yaratish\n\n"
-        "Tizim toza va bo'laklangan rejimda ishlamoqda.",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
+        f"Xush kelibsiz, {update.effective_user.first_name}!\n\n"
+        "Men sizga rasmlarni sifatli PDF qilishda va ijtimoiy tarmoqlardan (Instagram, TikTok, YouTube) video yuklashda yordam beraman.\n\n"
+        "Kerakli bo'limni tanlang:",
+        reply_markup=reply_markup
     )
 
-async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("📝 Masalan: `/pdf Salom dunyo`", parse_mode="Markdown")
-        return
-    text = ' '.join(context.args)
-    msg = await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
-    try:
-        pdf_bytes = services.create_pdf_from_text(text)
-        await msg.delete()
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
-            filename="hujjat.pdf",
-            caption="✅ PDF tayyor!"
-        )
-    except Exception as e:
-        await msg.edit_text(f"❌ Xatolik: {e}")
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id not in user_data_store:
+        user_data_store[user_id] = {'images': [], 'mode': None}
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    url = services.extract_url(text)
-
-    if url and services.is_video_url(url):
-        msg = await update.message.reply_text("⏳ Yuklanmoqda, kuting...")
-        try:
-            media_type, title, media_bytes, ext = await services.download_media(url)
-            size_mb = len(media_bytes) / (1024 * 1024)
-
-            if size_mb > 50:
-                await msg.edit_text(f"❌ Fayl {size_mb:.1f}MB — juda katta!")
-                return
-
-            caption = f"🎬 {title[:100]}\n📦 {size_mb:.1f}MB\n\n⬇️ @{BOT_USERNAME}"
+    if text == '🖼️ Rasm -> PDF':
+        user_data_store[user_id]['mode'] = 'pdf'
+        user_data_store[user_id]['images'] = []
+        await update.message.reply_text("Menga PDF qilmoqchi bo'lgan rasmlaringizni ketma-ket yuboring. Rasmlar tugagach, **'📄 PDF yaratish'** tugmasini bosing.")
+    
+    elif text == '📥 Video Yuklash':
+        user_data_store[user_id]['mode'] = 'video'
+        await update.message.reply_text("Menga video havolasini (linkini) yuboring, men uni sizga yuklab beraman.")
+        
+    elif text == '📄 PDF yaratish':
+        if user_data_store[user_id]['mode'] == 'pdf' and user_data_store[user_id]['images']:
+            msg = await update.message.reply_text("PDF fayl tayyorlanmoqda, iltimos kuting...")
+            output_pdf = f"fayl_{user_id}.pdf"
+            
+            # PDF yaratish funksiyasini chaqiramiz
+            create_pdf_from_images(user_data_store[user_id]['images'], output_pdf)
+            
+            with open(output_pdf, 'rb') as f:
+                await update.message.reply_document(document=f, filename="Smart_Document.pdf")
+            
             await msg.delete()
-
-            if media_type == 'image':
-                await update.message.reply_document(
-                    document=io.BytesIO(media_bytes),
-                    filename=f"rasm.{ext}",
-                    caption=caption
-                )
-            else:
-                await update.message.reply_video(
-                    video=io.BytesIO(media_bytes),
-                    caption=caption
-                )
-        except Exception as e:
-            await msg.edit_text(f"❌ Yuklab bo'lmadi: {str(e)[:300]}")
-    else:
-        await update.message.reply_text(
-            "👆 Havola yuboring yoki:\n"
-            "📄 /pdf — matndan PDF\n"
-            "📸 /album — rasmlardan PDF"
-        )
+            # Tozalash
+            for img in user_data_store[user_id]['images']:
+                if os.path.exists(img): os.remove(img)
+            if os.path.exists(output_pdf): os.remove(output_pdf)
+            user_data_store[user_id]['images'] = []
+        else:
+            await update.message.reply_text("Hali rasm yubormadingiz!")
+            
+    elif any(site in text for site in VIDEO_SITES):
+        # Agar havola yuborilsa
+        msg = await update.message.reply_text("Video yuklanmoqda, biroz kuting...")
+        video_url = await download_video_via_api(text)
+        
+        if video_url:
+            await update.message.reply_video(video=video_url)
+            await msg.delete()
+        else:
+            await msg.edit_text("Videoni yuklab bo'lmadi. Havola xato yoki serverda muammo.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo = update.message.photo[-1]
-    file = await photo.get_file()
-    img_bytes = bytes(await file.download_as_bytearray())
-
-    if context.user_data.get('album_mode'):
-        context.user_data.setdefault('album_images', []).append(img_bytes)
-        count = len(context.user_data['album_images'])
-        await update.message.reply_text(f"🖼 {count} ta rasm yig'ildi. Tugatish uchun: /done")
+    user_id = update.effective_user.id
+    if user_id not in user_data_store or user_data_store[user_id]['mode'] != 'pdf':
+        await update.message.reply_text("Iltimos, avval menyudan '🖼️ Rasm -> PDF' bo'limini tanlang.")
         return
-
-    msg = await update.message.reply_text("⏳ Saqlanmoqda...")
-    try:
-        await msg.delete()
-        await update.message.reply_document(
-            document=io.BytesIO(img_bytes),
-            filename="rasm.jpg",
-            caption=f"🖼 Rasm hujjat sifatida saqlandi!\n\n⬇️ @{BOT_USERNAME}"
-        )
-    except Exception as e:
-        await msg.edit_text(f"❌ Xatolik: {e}")
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    if doc.mime_type and doc.mime_type.startswith('image/'):
-        msg = await update.message.reply_text("⏳ PDF tayyorlanmoqda...")
-        try:
-            file = await doc.get_file()
-            img_bytes = bytes(await file.download_as_bytearray())
-            caption = update.message.caption or ""
-            pdf_bytes = services.create_pdf_from_image(img_bytes, caption)
-            await msg.delete()
-            await update.message.reply_document(
-                document=io.BytesIO(pdf_bytes),
-                filename="rasm.pdf",
-                caption="✅ Rasm PDF ga aylantirildi!"
-            )
-        except Exception as e:
-            await msg.edit_text(f"❌ Xatolik: {e}")
-
-async def album_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['album_mode'] = True
-    context.user_data['album_images'] = []
+        
+    photo_file = await update.message.photo[-1].get_file()
+    os.makedirs('downloads', exist_ok=True)
+    file_path = f"downloads/{photo_file.file_id}.jpg"
+    await photo_file.download_to_drive(file_path)
+    
+    user_data_store[user_id]['images'].append(file_path)
+    
+    keyboard = [['📄 PDF yaratish'], ['🖼️ Rasm -> PDF', '📥 Video Yuklash']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
     await update.message.reply_text(
-        "📸 *Album rejimi yoqildi!*\n\n"
-        "Rasmlarni ketma-ket yuboring, tugatgach /done deb yozing.",
-        parse_mode="Markdown"
+        f"{len(user_data_store[user_id]['images'])} ta rasm qabul qilindi. Yana yuborishingiz mumkin.",
+        reply_markup=reply_markup
     )
 
-async def album_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    images = context.user_data.get('album_images', [])
-    if not images:
-        await update.message.reply_text("⚠️ Rasm yuborilmadi!")
-        return
-
-    msg = await update.message.reply_text(f"⏳ {len(images)} ta rasmdan bitta PDF tayyorlanmoqda...")
-    try:
-        pdf_bytes = services.create_pdf_from_multiple_images(images)
-        await msg.delete()
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
-            filename="album.pdf",
-            caption=f"✅ {len(images)} ta rasmdan iborat PDF tayyor bo'ldi!"
-        )
-    except Exception as e:
-        await msg.edit_text(f"❌ Xatolik: {e}")
-    finally:
-        context.user_data['album_mode'] = False
-        context.user_data['album_images'] = []
-
-async def main():
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pdf", handle_pdf))
-    app.add_handler(CommandHandler("album", album_start))
-    app.add_handler(CommandHandler("done", album_done))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
+    print("✅ Bot yangi tizimda, polling rejimida muvaffaqiyatli ishga tushdi...")
+    app.run_polling()
 
-    print("✅ Bot polling rejimida ishga tushmoqda...")
-    await app.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.run(main())
+if __name__ == '__main__':
+    main()
