@@ -1,5 +1,5 @@
 python-telegram-bot==20.7
+Pillow
+reportlab
 httpx
 yt-dlp
-reportlab
-Pillow
